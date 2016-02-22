@@ -1,7 +1,8 @@
 {-# LANGUAGE DeriveFunctor #-}
 module Main where
 
-import Data.IORef
+import           Data.IORef
+import           System.Random
 
 import           Control.Monad.Trans.Free
 
@@ -44,16 +45,28 @@ simpleProgram = do
     then getFile "myFile"
     else saveFile "myFile" "my bytes" >> getFile "myFile-typo"
 
+oneIn :: Int -> IO Bool
+oneIn n = (==0) . (`mod`n) <$> randomIO
+
 -- TODO this would probably be cleaner with FreeT
 test :: IORef (Map Path Bytes) -> CloudFiles a -> IO (CloudResult a)
 test filesystem program = case runFree program of
   Pure last -> return $ CloudSuccess last
   Free (SaveFile p b next) -> do
-    modifyIORef filesystem (Map.insert p b)
-    test filesystem (next)
+    failure <- oneIn 4
+    if failure
+      then return PersistError
+      else do
+        modifyIORef filesystem (Map.insert p b)
+        test filesystem (next)
   Free (ListFiles next) -> do
-    files <- Map.keys <$> readIORef filesystem
-    test filesystem (next files)
+    -- randomly fail one in four times
+    failure <- oneIn 4
+    if failure
+      then return AccessError
+      else do
+        files <- Map.keys <$> readIORef filesystem
+        test filesystem (next files)
   Free (GetFile p next) -> do
     mcontents <- Map.lookup p <$> readIORef filesystem
     case mcontents of
